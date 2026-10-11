@@ -1,9 +1,48 @@
-# RareCatch — transaction fraud detection on imbalanced data
+<div align="center">
+
+# RareCatch
+
+**Transaction fraud detection on extremely imbalanced data** · **تشخیص تقلب تراکنش روی داده‌ی بسیار نامتوازن**
+
+Time-split evaluation · XGBoost / LightGBM · rules + ML hybrid · FastAPI at 2.5 ms p95 · playable Persian dashboard
+
+[English](#english) · [فارسی](#فارسی)
+
+![Live scoring replay](docs/img/live.png)
+
+</div>
+
+## English
+
+### What this is
+
+A fraud-detection pipeline on the public ULB/Worldline credit-card dataset: 284,807 transactions, only 492 frauds (0.173%). Accuracy is meaningless at this ratio, so everything is judged by PR-AUC, precision/recall at a fixed alert budget, and an expected-cost threshold. The split is by time (no shuffling), as it would be in production.
+
+### Highlights
+
+- **Honest evaluation:** 60/20/20 time split, every threshold chosen on validation and frozen for test, no tuning on the test set.
+- **Imbalance handling compared, not assumed:** class weights vs train-only undersampling, for both XGBoost and LightGBM, against logistic regression and Random Forest baselines.
+- **Rules + ML:** four quantile rules on V14/V17/V12/V10 catch 57 of 75 test frauds alone; the served policy (rule OR model) catches 58 at a cost of 3,190.
+- **Served and measured:** FastAPI `/score` with p50 2.17 ms / p95 2.55 ms end-to-end HTTP (single process, 2,000 sequential requests, dev laptop).
+- **Playable dashboard** (Persian, RTL): replays real scored test transactions, shows each decision and reveals the true label, with a live threshold/cost simulator.
+
+### Dashboard
+
+Open `dashboard/index.html` in a browser (no build step; or `python3 -m http.server -d dashboard` and visit `localhost:8000`).
+
+| Live replay | Threshold and cost | Quality and drift |
+|---|---|---|
+| ![](docs/img/live.png) | ![](docs/img/threshold.png) | ![](docs/img/quality.png) |
+
+- The replay plays all 75 test frauds plus 300 randomly sampled legitimate transactions (fixed seed), so fraud is far more common than in reality. It is a replay of real held-out data, not live traffic.
+- The threshold tab does not use that sample: fraud is the exact 75 cases and false alerts are exact counts over all 56,887 legitimate test transactions (`scripts/export_dashboard_data.py` writes `reports/dashboard_data.json`; the page embeds a snapshot).
+
+## Details
 
 Gradient-boosted fraud models on the public ULB/Worldline credit-card dataset (284,807 transactions, 492 frauds = 0.173%), evaluated with PR-AUC, fixed-alert-rate precision/recall and expected-cost thresholds, combined with a small rule layer, and served with FastAPI.
 **Measured: 2.5 ms p95 end-to-end HTTP scoring latency (p50 2.2 ms), single process, 2,000 sequential requests, Apple-silicon laptop.**
 
-## Run it
+### Run it
 
 ```bash
 brew install libomp        # macOS only, needed by LightGBM/XGBoost
@@ -20,7 +59,7 @@ Python 3.14 was used (pins in `requirements.txt` are for that interpreter).
 
 Data: the ULB dataset is fetched from its OpenML mirror (id 1597, same data as the Kaggle release, no login) by `scripts/download_data.py`. The 2013 data spans 48 h.
 
-## Approach
+### Approach
 
 - **Split:** sorted by `Time`, cut by position 60/20/20, no shuffling. Frauds: train 360, val 57, test 75.
 - **Features:** 28 PCA components, `log1p(Amount)`, hour-of-day. Raw `Time` is deliberately excluded (with a time split, every test value is out of the training range).
@@ -29,7 +68,7 @@ Data: the ULB dataset is fetched from its OpenML mirror (id 1597, same data as t
 - **Metrics:** PR-AUC = average precision. Precision/recall at fixed alert rates. Expected cost = 10 per false alert (assumed manual-review cost) + full `Amount` of every missed fraud.
 - **Rules:** four conditions `V14/V17/V12/V10 <= c`, with `c` the 0.1th percentile of legitimate train transactions (train only). Hybrid = rule hit OR model score >= threshold.
 
-## Results (test set, 56,962 transactions, 75 frauds)
+### Results (test set, 56,962 transactions, 75 frauds)
 
 | model | PR-AUC | P / R @0.1% alerts | P / R @0.5% | P / R @1% | cost-opt alerts | cost saved vs no model |
 |---|---|---|---|---|---|---|
@@ -59,7 +98,7 @@ Findings:
 - Differences between the tuned GBMs, Random Forest and logistic regression are within noise at 75 test frauds; the GBMs do not clearly beat the baselines here. Undersampling to 20:1 was equal to or slightly better than class weighting. With a 474x `scale_pos_weight` LightGBM's sigmoid saturates, so `predict_proba` ties at 1.0 for thousands of rows and PR-AUC collapses (val 0.08); ranking by raw margins fixes it (val 0.68, still below the ~0.78 of the other GBMs). This is why `scoring.py` ranks GBMs by margin and the API `score` is a margin.
 - At matched alert rates the hybrid is no better than ML alone (0.5%: 61 vs 63 frauds caught, slightly lower cost; 1%: identical recall). The rules are strong on their own: V14/V17/V12/V10 lows catch 57/75 frauds with 134 alerts, and the cost-optimal hybrid collapses to "rules only" because on validation the 13 frauds the rules miss total only 4,474 in amount, which no threshold catches for less than 10 per false alert. The served rule: alert if any rule fires OR the ML score passes its own cost-optimal threshold (62 alerts alone). The lower hybrid cost (3,209 vs 3,963) is largely driven by a few fraud amounts, so treat it as suggestive, not conclusive.
 
-## Serving and latency
+### Serving and latency
 
 `POST /score` takes the 30 raw fields (`Time`, `V1..V28`, `Amount`) and returns `{score, alert, rule_hits}`; `alert` = any rule hit OR score >= the ML cost-optimal threshold. `score` is the XGBoost margin (higher = riskier, not a calibrated probability). Model loaded once at startup, single-thread inference.
 
@@ -70,15 +109,49 @@ Findings:
 
 Sequential single-client latency, not throughput under load.
 
-## Drift
+### Drift
 
 `make drift` writes PSI (train vs test) per feature and for the model score to `reports/drift_psi.csv`. The hour-of-day feature shows extreme PSI by construction: the test period covers a different part of the day cycle than train. This is a sign the two-day window cannot support seasonality claims, not an incident.
 
-## Limitations
+### Limitations
 
 - Only 75 test (57 validation) frauds: PR-AUC and cost estimates are noisy; model rankings could flip with another split. No confidence intervals were computed.
 - The 10-per-alert cost and "loss = full transaction amount" are assumptions, not Digipay figures.
 - Features are PCA-anonymised, so rules are not interpretable business rules, and the rule cutoffs are specific to this dataset.
 - Two days of data: no seasonality, no concept-drift evaluation; `hour` is weakly informative and drifts across the split.
-- PaySim (optional second dataset) and a monitoring dashboard were not done.
+- PaySim (optional second dataset) was not done. The dashboard is a replay of real test rows, not a live monitor.
 - Fraud labels are used as ground truth with no delay; in production labels arrive late, which this setup ignores.
+
+---
+
+## فارسی
+
+### این پروژه چیست؟
+
+یک خط‌لوله‌ی تشخیص تقلب روی مجموعه‌داده‌ی عمومی کارت اعتباری ULB/Worldline: ۲۸۴٬۸۰۷ تراکنش که فقط ۴۹۲ مورد (۰٫۱۷۳٪) تقلب است. در چنین نسبتی «دقت کلی» بی‌معناست؛ بنابراین مدل‌ها با PR-AUC، دقت و بازیابی در یک بودجه‌ی ثابت هشدار، و آستانه‌ی مبتنی بر هزینه سنجیده شده‌اند. داده بر اساس زمان تقسیم شده (بدون بُر زدن)، درست مثل محیط واقعی.
+
+### نکات برجسته
+
+- **ارزیابی صادقانه:** تقسیم زمانی ۶۰/۲۰/۲۰؛ همه‌ی آستانه‌ها روی اعتبارسنجی انتخاب و بدون تغییر روی آزمون اعمال شده‌اند.
+- **مقایسه‌ی روش‌های نامتوازنی:** وزن‌دهی کلاس در برابر کم‌نمونه‌گیری (فقط روی آموزش) برای XGBoost و LightGBM، در برابر رگرسیون لجستیک و جنگل تصادفی.
+- **قوانین + یادگیری ماشین:** چهار قانون چندکی روی V14، V17، V12 و V10 به‌تنهایی ۵۷ از ۷۵ تقلب آزمون را می‌گیرند. سیاست سرویس (قانون یا مدل) ۵۸ مورد را با هزینه‌ی ۳٬۱۹۰ می‌گیرد.
+- **سرویس‌دهی و اندازه‌گیری:** API با FastAPI؛ تأخیر HTTP سرتاسری p50 برابر ۲٫۱۷ و p95 برابر ۲٫۵۵ میلی‌ثانیه (یک پردازه، ۲۰۰۰ درخواست متوالی، لپ‌تاپ توسعه).
+- **داشبورد فارسی و تعاملی:** تراکنش‌های واقعی آزمون را بازپخش می‌کند، تصمیم هر تراکنش را نشان می‌دهد و بعد برچسب واقعی را فاش می‌کند؛ به‌علاوه شبیه‌ساز آستانه و هزینه.
+
+### داشبورد
+
+فایل `dashboard/index.html` را در مرورگر باز کنید (بدون نیاز به build). تب‌ها: پایش زنده، آستانه و هزینه، کیفیت و رانش، روش و محدودیت‌ها.
+
+- بازپخش شامل هر ۷۵ تقلب آزمون و ۳۰۰ تراکنش سالمِ نمونه‌ی تصادفی است؛ پس تقلب بسیار پرتکرارتر از واقعیت دیده می‌شود. این بازپخش داده‌ی واقعیِ کنارگذاشته‌شده است، نه ترافیک زنده.
+- تب آستانه از این نمونه استفاده نمی‌کند: تقلب‌ها همان ۷۵ مورد دقیق‌اند و هشدارهای اشتباه از شمارش دقیق همه‌ی ۵۶٬۸۸۷ تراکنش سالم آزمون به دست می‌آیند.
+
+### اجرا
+
+دستورها در بخش Run it (بالا) آمده‌اند: `make setup data`، سپس `make eda train drift bench`، و برای سرویس `make serve`.
+
+### محدودیت‌ها
+
+- فقط ۷۵ تقلب در آزمون (۵۷ در اعتبارسنجی)؛ رتبه‌بندی مدل‌ها نویزی است و فاصله‌ی اطمینان محاسبه نشده.
+- هزینه‌ی ۱۰ برای هر هشدار اشتباه فرض است، نه عدد واقعی Digipay.
+- ویژگی‌ها ناشناس (PCA) هستند؛ قوانین معنای کسب‌وکاری ندارند.
+- فقط دو روز داده: بدون فصلی‌بودن و ارزیابی رانش مفهومی.
