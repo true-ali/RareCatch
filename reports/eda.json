@@ -1,0 +1,31 @@
+{
+  "rows": 284807,
+  "frauds": 492,
+  "fraud_rate": 0.001727485630620034,
+  "span_hours": 47.99777777777778,
+  "amount_median": {
+    "legit": 22.0,
+    "fraud": 9.25
+  },
+  "amount_mean": {
+    "legit": 88.29102242231328,
+    "fraud": 122.21132113821139
+  },
+  "fraud_rate_00_06h": 0.005180697722999791,
+  "fraud_rate_other_hours": 0.001410653500567328,
+  "split_frauds": {
+    "train": 360,
+    "val": 57,
+    "test": 75
+  },
+  "top_separating_features_train": [
+    "V14",
+    "V12",
+    "V4",
+    "V3",
+    "V11",
+    "V10",
+    "V2",
+    "V16"
+  ]
+}
